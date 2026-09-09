@@ -1,0 +1,75 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: paddockai-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-paddockai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-paddockai_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-paddockai}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-paddockai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - paddockai-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: paddockai-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-paddockai}:${POSTGRES_PASSWORD:-paddockai_dev}@postgres:5432/${POSTGRES_DB:-paddockai}
+      DATABASE_URL_SYNC: postgresql://${POSTGRES_USER:-paddockai}:${POSTGRES_PASSWORD:-paddockai_dev}@postgres:5432/${POSTGRES_DB:-paddockai}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./data:/data
+      - ./ml:/ml
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - paddockai-net
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: paddockai-frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_DEMO_MODE: ${DEMO_MODE:-true}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    networks:
+      - paddockai-net
+    command: npm run dev
+
+volumes:
+  postgres_data:
+
+networks:
+  paddockai-net:
+    driver: bridge
